@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import { supabase } from '../lib/supabase.js'
 
 function makeId() {
   return typeof crypto !== 'undefined' && crypto.randomUUID
@@ -6,15 +7,30 @@ function makeId() {
     : `id_${Date.now()}_${Math.random().toString(36).slice(2)}`
 }
 
+function fromDB(row) {
+  return {
+    id: row.id,
+    type: row.type,
+    amount: row.amount,
+    category: row.category,
+    memo: row.memo || '',
+    tags: row.tags || [],
+    dayOfMonth: row.day_of_month,
+  }
+}
+
 export function useRecurring() {
   const [recurringItems, setRecurringItems] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/recurring')
-      .then(r => r.json())
-      .then(setRecurringItems)
-      .catch(err => console.error('반복항목 로드 실패:', err))
+    supabase
+      .from('recurring_items')
+      .select('*')
+      .then(({ data, error }) => {
+        if (error) console.error('반복항목 로드 실패:', error)
+        else setRecurringItems((data || []).map(fromDB))
+      })
       .finally(() => setLoading(false))
   }, [])
 
@@ -26,35 +42,40 @@ export function useRecurring() {
       category: data.category,
       memo: data.memo || '',
       tags: data.tags || [],
-      dayOfMonth: Number(data.dayOfMonth) || 1,
+      day_of_month: Number(data.dayOfMonth) || 1,
     }
-    const res = await fetch('/api/recurring', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newItem),
-    })
-    const created = await res.json()
-    setRecurringItems(prev => [...prev, created])
-    return created
+    const { data: created, error } = await supabase
+      .from('recurring_items')
+      .insert(newItem)
+      .select()
+      .single()
+    if (error) throw error
+    const item = fromDB(created)
+    setRecurringItems(prev => [...prev, item])
+    return item
   }, [])
 
   const updateRecurring = useCallback(async (id, data) => {
-    const res = await fetch(`/api/recurring/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...data,
+    const { data: row, error } = await supabase
+      .from('recurring_items')
+      .update({
+        type: data.type,
         amount: Number(data.amount),
-        dayOfMonth: Number(data.dayOfMonth),
+        category: data.category,
+        memo: data.memo || '',
         tags: data.tags || [],
-      }),
-    })
-    const updated = await res.json()
-    setRecurringItems(prev => prev.map(item => item.id === id ? updated : item))
+        day_of_month: Number(data.dayOfMonth),
+      })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw error
+    setRecurringItems(prev => prev.map(item => item.id === id ? fromDB(row) : item))
   }, [])
 
   const deleteRecurring = useCallback(async (id) => {
-    await fetch(`/api/recurring/${id}`, { method: 'DELETE' })
+    const { error } = await supabase.from('recurring_items').delete().eq('id', id)
+    if (error) throw error
     setRecurringItems(prev => prev.filter(item => item.id !== id))
   }, [])
 
