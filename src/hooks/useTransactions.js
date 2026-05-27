@@ -108,23 +108,36 @@ export function useTransactions() {
   }, [])
 
   const addRecurringTransactions = useCallback(async (recurringItems, yearMonth) => {
-    const toAdd = recurringItems.filter(item =>
-      !transactions.some(tx => tx.recurringId === item.id && tx.date.startsWith(yearMonth))
-    ).map(item => {
-      const [y, m] = yearMonth.split('-')
-      return {
-        id: makeId(),
-        date: `${y}-${m}-${String(item.dayOfMonth).padStart(2, '0')}`,
-        type: item.type,
-        amount: Number(item.amount),
-        category: item.category,
-        memo: item.memo || '',
-        tags: item.tags || [],
-        isRecurring: true,
-        recurringId: item.id,
-        createdAt: new Date().toISOString(),
-      }
-    })
+    if (!recurringItems || recurringItems.length === 0) return 0
+
+    // 멀티 탭/디바이스 중복 방지를 위해 DB 기준으로 이미 존재하는 항목 확인
+    const ids = recurringItems.map(i => i.id)
+    const { data: existingRows, error: checkError } = await supabase
+      .from('transactions')
+      .select('recurring_id, date')
+      .in('recurring_id', ids)
+      .gte('date', `${yearMonth}-01`)
+      .lte('date', `${yearMonth}-31`)
+    if (checkError) throw checkError
+    const existingIds = new Set((existingRows || []).map(r => r.recurring_id))
+
+    const toAdd = recurringItems
+      .filter(item => !existingIds.has(item.id))
+      .map(item => {
+        const [y, m] = yearMonth.split('-')
+        return {
+          id: makeId(),
+          date: `${y}-${m}-${String(item.dayOfMonth).padStart(2, '0')}`,
+          type: item.type,
+          amount: Number(item.amount),
+          category: item.category,
+          memo: item.memo || '',
+          tags: item.tags || [],
+          isRecurring: true,
+          recurringId: item.id,
+          createdAt: new Date().toISOString(),
+        }
+      })
 
     if (toAdd.length === 0) return 0
 
@@ -138,7 +151,7 @@ export function useTransactions() {
       [...prev, ...results].sort((a, b) => b.date.localeCompare(a.date))
     )
     return results.length
-  }, [transactions])
+  }, [])
 
   const getByMonth = useCallback((yearMonth) => {
     return transactions.filter(tx => tx.date.startsWith(yearMonth))
